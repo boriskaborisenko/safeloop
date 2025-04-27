@@ -1,0 +1,22 @@
+{
+  "name": "safeloop-ubp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "ethers": "^6.13.5",
+    "knex": "^3.1.0",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.15.5",
+    "technicalindicators": "^3.1.0",
+    "winston": "^3.17.0"
+  }
+}
