@@ -16,5 +16,4 @@ app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
 });
 
-// И сразу стартуем SafeLoop
-safeLoop();
+
