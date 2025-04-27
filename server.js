@@ -1,11 +1,12 @@
-const express = require('express');
+import express from 'express';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { default: safeLoop } = await import('./index.js'); // Импортируем твой SafeLoop
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Подключаем твой SafeLoop
-require('./index'); 
-
-// Простейший роут
+// Минимальный роут
 app.get('/', (req, res) => {
   res.send('SafeLoop is running!');
 });
@@ -14,3 +15,6 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
 });
+
+// И сразу стартуем SafeLoop
+safeLoop();
