@@ -45,6 +45,6 @@ export const config = {
   usdtDecimals: 18,
 
   // === Telegram уведомления ===
-  telegramToken: '7626828622:AAFRaC4shAXqFUHJqrgj9CmALanWTYe_ELE',
-  telegramChatId: '-4655305415',
+  telegramToken: process.env.TG_TOKEN,
+  telegramChatId: process.env.TG_CHAT_ID,
 };
