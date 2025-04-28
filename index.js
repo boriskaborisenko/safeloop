@@ -152,12 +152,18 @@ const safeLoop = async () => {
       if (total > 0) {
         const usdtRatio = usdt / total;
       
-        // Проверка на перекос в неправильную сторону
-        if ((delta > 0 && usdtRatio < 0.05) || (delta < 0 && usdtRatio > 0.95)) {
-          // ❗ ТОЛЬКО тогда блокируем свап
+        if (delta > 0 && usdtRatio < 0.05) {
+          // Продаем BTC, а USDT нету почти — плохо, блокируем
           reasons.push(`portfolio imbalance: USDT ratio ${fixedTo((usdtRatio * 100), 1)}%`);
         }
+        if (delta < 0 && usdtRatio <= 0.0) {
+          // Покупаем BTC, а USDT вообще нет — плохо, блокируем
+          reasons.push(`portfolio imbalance: no USDT to buy`);
+        }
       }
+
+    
+      
       
 
     if (Math.abs(delta) < swapTrigger) {
