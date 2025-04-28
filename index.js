@@ -144,10 +144,21 @@ const safeLoop = async () => {
       reasons.push(`checkInterval not passed (${fixedTo((config.checkInterval / 60000), 0)} min)`);
     }
 
-    const usdtRatio = usdt / total;
-    if (total > 0 && (usdtRatio < 0.05 || usdtRatio > 0.95)) {
+    
+    //const usdtRatio = usdt / total;
+    /* if (total > 0 && (usdtRatio < 0.05 || usdtRatio > 0.95)) {
       reasons.push(`portfolio imbalance: USDT ratio ${fixedTo((usdtRatio * 100), 1)}%`);
-    }
+    } */
+      if (total > 0) {
+        const usdtRatio = usdt / total;
+      
+        // Проверка на перекос в неправильную сторону
+        if ((delta > 0 && usdtRatio < 0.05) || (delta < 0 && usdtRatio > 0.95)) {
+          // ❗ ТОЛЬКО тогда блокируем свап
+          reasons.push(`portfolio imbalance: USDT ratio ${fixedTo((usdtRatio * 100), 1)}%`);
+        }
+      }
+      
 
     if (Math.abs(delta) < swapTrigger) {
       reasons.push(`delta ${deltaPercent}% < trigger ${fixedTo((swapTrigger * 100), 2)}%`);
