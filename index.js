@@ -21,14 +21,16 @@ const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
 const RUNTIME_ID = 'main';
 
-await db.ensureRuntimeState(RUNTIME_ID, {
-  base_price: null,
-  start_value: null,
-  last_swap: null,
-  prices: JSON.stringify([])
-});
-
 const initialState = await db.getRuntimeState(RUNTIME_ID);
+
+if (!initialState) {
+  await db.ensureRuntimeState(RUNTIME_ID, {
+    base_price: null,
+    start_value: null,
+    last_swap: null,
+    prices: JSON.stringify([])
+  });
+}
 
 let state = initialState ? {
   basePrice: parseFloat(initialState.base_price),
