@@ -21,7 +21,7 @@ const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
 const RUNTIME_ID = 'main';
 
-const initialState = await db.getRuntimeState(RUNTIME_ID);
+let initialState = await db.getRuntimeState(RUNTIME_ID);
 
 if (!initialState) {
   await db.ensureRuntimeState(RUNTIME_ID, {
@@ -30,6 +30,7 @@ if (!initialState) {
     last_swap: null,
     prices: JSON.stringify([])
   });
+  initialState = await db.getRuntimeState(RUNTIME_ID); // <<< ВОТ ЭТО ОБЯЗАТЕЛЬНО
 }
 
 let state = initialState ? {
@@ -37,7 +38,9 @@ let state = initialState ? {
   startValue: parseFloat(initialState.start_value),
   lastSwap: new Date(initialState.last_swap).getTime(),
   balances: { usdt: 0, btc: 0 },
-  prices: (typeof initialState.prices === 'string' && initialState.prices.startsWith('[')) ? JSON.parse(initialState.prices) : []
+  prices: (typeof initialState.prices === 'string' && initialState.prices.startsWith('['))
+    ? JSON.parse(initialState.prices)
+    : []
 } : {
   basePrice: null,
   startValue: null,
