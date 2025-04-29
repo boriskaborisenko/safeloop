@@ -5,7 +5,7 @@ import { config } from './config/index.js';
 import { notify } from './lib/notifier.js';
 import { getWalletBalances } from './lib/balances.js';
 import { getCurrentBTCPrice } from './lib/price.js';
-import { calculateMACD } from './lib/macd.js';
+import { getMACD } from './lib/macd.js';
 import {
   loadSystemState,
   createSystemState,
@@ -47,7 +47,7 @@ const safeLoop = async () => {
     prices.push(currentPrice);
     if (prices.length > 40) prices.shift();
 
-    const macdResult = prices.length >= 26 ? await calculateMACD(prices) : null;
+    const macdResult = prices.length >= 26 ? await getMACD(prices) : null;
 
     const basePoint = parseFloat(systemState.current_base_point);
     const delta = (currentPrice - basePoint) / basePoint;
