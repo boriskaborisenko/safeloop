@@ -2,7 +2,6 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import knex from './supabase.js';
-
 import { ethers } from 'ethers';
 import { config } from './config/index.js';
 import logger from './lib/logger.js';
@@ -32,7 +31,7 @@ if (!initialState) {
     last_swap: null,
     prices: JSON.stringify([])
   });
-  initialState = await db.getRuntimeState(RUNTIME_ID); // <<< ВОТ ЭТО ОБЯЗАТЕЛЬНО
+  initialState = await db.getRuntimeState(RUNTIME_ID);
 }
 
 let state = initialState ? {
@@ -78,7 +77,7 @@ const safeLoop = async () => {
 
     const price = await getPoolPrice(provider);
     state.prices.push(price);
-    if (state.prices.length > 26) state.prices.shift();
+    if (state.prices.length > 40) state.prices.shift();
 
     await updateBalances(wallet, state);
     const { btc, usdt } = state.balances;
@@ -104,7 +103,7 @@ const safeLoop = async () => {
       }
     }
 
-    let rawAmount;
+    let rawAmount = 0;
     let selectedAssets = [];
 
     if (delta > 0) {
@@ -167,27 +166,15 @@ const safeLoop = async () => {
       reasons.push(`checkInterval not passed (${fixedTo((config.checkInterval / 60000), 0)} min)`);
     }
 
-    
-    //const usdtRatio = usdt / total;
-    /* if (total > 0 && (usdtRatio < 0.05 || usdtRatio > 0.95)) {
-      reasons.push(`portfolio imbalance: USDT ratio ${fixedTo((usdtRatio * 100), 1)}%`);
-    } */
-      if (total > 0) {
-        const usdtRatio = usdt / total;
-      
-        if (delta > 0 && usdtRatio < 0.05) {
-          // Продаем BTC, а USDT нету почти — плохо, блокируем
-          reasons.push(`portfolio imbalance: USDT ratio ${fixedTo((usdtRatio * 100), 1)}%`);
-        }
-        if (delta < 0 && usdtRatio <= 0.0) {
-          // Покупаем BTC, а USDT вообще нет — плохо, блокируем
-          reasons.push(`portfolio imbalance: no USDT to buy`);
-        }
+    if (total > 0) {
+      const usdtRatio = usdt / total;
+      if (delta > 0 && usdtRatio < 0.05) {
+        reasons.push(`portfolio imbalance: USDT ratio ${fixedTo((usdtRatio * 100), 1)}%`);
       }
-
-    
-      
-      
+      if (delta < 0 && usdtRatio <= 0.0) {
+        reasons.push(`portfolio imbalance: no USDT to buy`);
+      }
+    }
 
     if (Math.abs(delta) < swapTrigger) {
       reasons.push(`delta ${deltaPercent}% < trigger ${fixedTo((swapTrigger * 100), 2)}%`);
@@ -211,10 +198,12 @@ const safeLoop = async () => {
       const reasonText = `❌ Swap not executed due to:\n- ${reasons.join('\n- ')}`;
       logger.info(reasonText);
       logChunks.push(reasonText);
-    } else {
+    } else if (rawAmount > 0) {
       logger.info(`✅ Swap conditions met — executing swap...`);
       logChunks.push('✅ Swap conditions met — executing swap...');
+
       didSwap = await executeSwap(wallet, delta, state.balances, price);
+
       if (didSwap) {
         state.basePrice = price;
         state.lastSwap = now;
@@ -254,6 +243,9 @@ const safeLoop = async () => {
         logger.warn(`❌ Swap execution failed or returned false`);
         logChunks.push(`❌ Swap execution failed or returned false`);
       }
+    } else {
+      logger.warn(`❌ Swap conditions met but rawAmount = 0, skipping swap`);
+      logChunks.push('❌ Swap conditions met but rawAmount = 0, skipping swap');
     }
 
     await db.insertStateLog({
@@ -290,5 +282,5 @@ const safeLoop = async () => {
 };
 
 logger.info('🚀 SafeLoop ΔUBP Rebalance Engine started...');
-await safeLoop(); // <<< ВЫПОЛНИТЬ ПЕРВЫЙ ЦИКЛ СРАЗУ!
+await safeLoop();
 setInterval(safeLoop, config.checkInterval);
