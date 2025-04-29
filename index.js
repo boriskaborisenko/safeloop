@@ -49,6 +49,22 @@ let state = initialState ? {
   prices: []
 };
 
+if (!state.prices || state.prices.length < 10) {
+  const fallback = await knex('loop_state_log')
+    .orderBy('id', 'desc')
+    .limit(40)
+    .select('current_price');
+
+  const restored = fallback.map(r => parseFloat(r.current_price)).reverse();
+
+  if (restored.length > 0) {
+    state.prices = restored;
+    console.warn(`⚠️ Prices restored from state_log: ${restored.length} values`);
+  } else {
+    console.warn('⚠️ No fallback prices available in state_log');
+  }
+}
+
 const getPortfolioValue = (btc, usdt, price) => usdt + btc * price;
 
 const safeLoop = async () => {
