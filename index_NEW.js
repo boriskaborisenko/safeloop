@@ -1,109 +1,125 @@
-// index_NEW.js (чистый файл под новую архитектуру SafeLoop)
+import dotenv from 'dotenv';
+dotenv.config();
 
 import { ethers } from 'ethers';
+import knex from './supabase.js';
 import { config } from './config/index.js';
+import logger from './lib/logger.js';
 import { notify } from './lib/notifier.js';
-import { getWalletBalances } from './lib/balances.js';
-import { getCurrentBTCPrice } from './lib/price.js';
-import { getMACD } from './lib/macd.js';
-import {
-  loadSystemState,
-  createSystemState,
-  updateSystemState,
-  loadActiveBuys,
-  insertAssetBuy,
-  insertAssetSell,
-  closeAssets,
-  loadManualCorrections
-} from './db.js';
+import { getPoolPrice } from './lib/price.js';
+import { updateBalances } from './lib/balances.js';
 import { keepGasPumping } from './lib/gas.js';
+import { executeSwap } from './lib/swap.js';
+import * as db from './db.js';
 
-// === Параметры ===
+const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+
 const RUNTIME_ID = process.env.RUNTIME_ID || 'main';
-let systemState = await loadSystemState(RUNTIME_ID);
 
-// === Инициализация ===
+// === Инициализация состояния ===
+let systemState = await db.loadSystemState(RUNTIME_ID);
+
 if (!systemState) {
-  const currentPrice = await getCurrentBTCPrice();
-  const balances = await getWalletBalances();
-  await createSystemState(RUNTIME_ID, currentPrice, balances);
-  systemState = await loadSystemState(RUNTIME_ID);
+  const price = await getPoolPrice(provider);
+  const balances = await updateBalances(wallet);
+  await db.createSystemState(RUNTIME_ID, price, balances);
+  systemState = await db.loadSystemState(RUNTIME_ID);
 }
+
+// === Функция расчёта профита ===
+const calculateProfit = (startBTC, startUSDT, currentBTC, currentUSDT, basePrice, netManualFlow) => {
+  const startValue = (startBTC * basePrice) + startUSDT + netManualFlow;
+  const currentValue = (currentBTC * basePrice) + currentUSDT;
+  return currentValue - startValue;
+};
 
 // === Основной цикл ===
 const safeLoop = async () => {
-  console.log('🕒 Starting SafeLoop Iteration');
+  logger.info('🕒 New SafeLoop Iteration');
 
   try {
-    await keepGasPumping();
+    await keepGasPumping(wallet, provider);
 
-    const balances = await getWalletBalances();
-    const currentPrice = await getCurrentBTCPrice();
-    const manual = await loadManualCorrections(RUNTIME_ID);
+    const balances = await updateBalances(wallet);
+    const price = await getPoolPrice(provider);
 
-    const correctedUSDT = balances.usdt + manual.netManualFlow;
+    const manual = await db.loadManualCorrections(RUNTIME_ID);
 
     let prices = JSON.parse(systemState.prices || '[]');
-    prices.push(currentPrice);
+    prices.push(price);
     if (prices.length > 40) prices.shift();
 
-    const macdResult = prices.length >= 26 ? await getMACD(prices) : null;
-
-    const basePoint = parseFloat(systemState.current_base_point);
-    const delta = (currentPrice - basePoint) / basePoint;
+    const delta = (price - parseFloat(systemState.current_base_point)) / parseFloat(systemState.current_base_point);
 
     let action = 'HOLD';
     let details = '';
 
     if (delta <= -config.threshold) {
-      const stepAmountUSD = correctedUSDT * config.swapPortion;
-      if (correctedUSDT >= config.minSwapUSD && stepAmountUSD >= config.minSwapUSD) {
-        const buyAmountBTC = stepAmountUSD / currentPrice;
-        await insertAssetBuy(RUNTIME_ID, buyAmountBTC, currentPrice, stepAmountUSD);
-        action = 'BUY';
-        details = `Bought ${buyAmountBTC.toFixed(6)} BTC for ${stepAmountUSD.toFixed(2)} USDT`;
+      // ПОКУПКА BTC
+      const stepAmountUSD = balances.usdt * config.swapPortion;
+      if (balances.usdt >= config.minSwapUSD && stepAmountUSD >= config.minSwapUSD) {
+        const success = await executeSwap(wallet, 'BUY', stepAmountUSD, price);
+        if (success) {
+          await db.insertAssetBuy(RUNTIME_ID, success.amountBTC, price, success.amountUSD);
+          action = 'BUY';
+          details = `Bought ${success.amountBTC.toFixed(6)} BTC for ${success.amountUSD.toFixed(2)} USDT`;
+        } else {
+          details = 'BUY failed';
+        }
       } else {
-        details = 'Not enough USDT to buy';
+        details = 'Not enough USDT for buy';
       }
 
     } else if (delta >= config.threshold) {
-      const activeBuys = await loadActiveBuys(RUNTIME_ID);
+      // ПРОДАЖА BTC
+      const activeBuys = await db.loadActiveBuys(RUNTIME_ID);
       const profitable = activeBuys.filter(buy => {
-        const profitDelta = (currentPrice - parseFloat(buy.price_usd)) / parseFloat(buy.price_usd);
+        const profitDelta = (price - parseFloat(buy.price_usd)) / parseFloat(buy.price_usd);
         return profitDelta >= config.threshold;
       });
 
       const totalBTC = profitable.reduce((sum, buy) => sum + parseFloat(buy.amount_btc), 0);
-      const totalUSD = totalBTC * currentPrice;
 
-      if (totalBTC > 0 && totalUSD >= config.minSwapUSD) {
-        await insertAssetSell(RUNTIME_ID, totalBTC, currentPrice, totalUSD);
-        const idsToClose = profitable.map(buy => buy.id);
-        await closeAssets(idsToClose);
-        action = 'SELL';
-        details = `Sold ${totalBTC.toFixed(6)} BTC for ${totalUSD.toFixed(2)} USDT`;
+      if (totalBTC > 0) {
+        const success = await executeSwap(wallet, 'SELL', totalBTC, price);
+        if (success) {
+          const idsToClose = profitable.map(buy => buy.id);
+          await db.closeAssets(idsToClose);
+          await db.insertAssetSell(RUNTIME_ID, totalBTC, price, success.amountUSD);
 
-        const remainingBuys = await loadActiveBuys(RUNTIME_ID);
-        if (remainingBuys.length > 0) {
-          const totalWeighted = remainingBuys.reduce((sum, buy) => sum + parseFloat(buy.amount_btc) * parseFloat(buy.price_usd), 0);
-          const totalBtc = remainingBuys.reduce((sum, buy) => sum + parseFloat(buy.amount_btc), 0);
-          systemState.current_base_point = (totalWeighted / totalBtc);
+          const remainingBuys = await db.loadActiveBuys(RUNTIME_ID);
+          if (remainingBuys.length > 0) {
+            const weightedSum = remainingBuys.reduce((sum, buy) => sum + parseFloat(buy.amount_btc) * parseFloat(buy.price_usd), 0);
+            const totalAmount = remainingBuys.reduce((sum, buy) => sum + parseFloat(buy.amount_btc), 0);
+            systemState.current_base_point = weightedSum / totalAmount;
+          } else {
+            systemState.current_base_point = price;
+          }
+
+          action = 'SELL';
+          details = `Sold ${totalBTC.toFixed(6)} BTC for ${success.amountUSD.toFixed(2)} USDT`;
         } else {
-          systemState.current_base_point = currentPrice;
+          details = 'SELL failed';
         }
       } else {
         details = 'No profitable BTC to sell';
       }
-
     } else {
+      // НИ ПОКУПКА, НИ ПРОДАЖА
       details = 'Delta within threshold, holding';
     }
 
-    const newPortfolioValue = (balances.btc * currentPrice) + balances.usdt;
-    const startPortfolioValue = (parseFloat(systemState.btc_balance_start) * basePoint) + parseFloat(systemState.usdt_balance_start) + manual.netManualFlow;
-    const totalProfit = newPortfolioValue - startPortfolioValue;
+    const totalProfit = calculateProfit(
+      parseFloat(systemState.btc_balance_start),
+      parseFloat(systemState.usdt_balance_start),
+      balances.btc,
+      balances.usdt,
+      parseFloat(systemState.current_base_point),
+      manual.netManualFlow
+    );
 
-    await updateSystemState(RUNTIME_ID, {
+    await db.updateSystemState(RUNTIME_ID, {
       prices: JSON.stringify(prices),
       usdt_balance_now: balances.usdt,
       btc_balance_now: balances.btc,
@@ -113,7 +129,7 @@ const safeLoop = async () => {
 
     await notify({
       action,
-      price: currentPrice,
+      price: price,
       usdtBalance: balances.usdt,
       btcBalance: balances.btc,
       deltaPercent: (delta * 100).toFixed(2),
@@ -122,7 +138,7 @@ const safeLoop = async () => {
     });
 
   } catch (error) {
-    console.error('SafeLoop Error:', error.message);
+    logger.error('SafeLoop ERROR:', error.message);
     await notify({
       action: 'ERROR',
       error: error.message,
@@ -131,6 +147,6 @@ const safeLoop = async () => {
   }
 };
 
-console.log('🚀 SafeLoop ΔUBP Engine started...');
+logger.info('🚀 SafeLoop ΔUBP started...');
 await safeLoop();
 setInterval(safeLoop, config.checkInterval);
